@@ -1,0 +1,192 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.unlock-container {
+  width: 100%;
+  max-width: 500px;
+}
+
+.unlock-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 20px;
+  padding: 40px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+.unlock-card h1 {
+  font-size: 2.5em;
+  color: #333;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.subtitle {
+  text-align: center;
+  color: #666;
+  margin-bottom: 30px;
+  font-size: 1.1em;
+}
+
+.error-message {
+  background: #fee;
+  color: #c33;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border: 1px solid #fcc;
+  text-align: center;
+}
+
+.success-message {
+  background: #efe;
+  color: #3c3;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border: 1px solid #cfc;
+  text-align: center;
+}
+
+.auth-options {
+  margin-top: 30px;
+}
+
+.auth-button {
+  width: 100%;
+  padding: 15px 20px;
+  font-size: 1.1em;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.webauthn-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.webauthn-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+}
+
+.webauthn-button:active {
+  transform: translateY(0);
+}
+
+.webauthn-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.password-button {
+  background: #333;
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.password-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.password-button:active {
+  transform: translateY(0);
+}
+
+.password-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button-icon {
+  font-size: 1.3em;
+}
+
+.divider {
+  text-align: center;
+  margin: 20px 0;
+  position: relative;
+  color: #999;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 40%;
+  height: 1px;
+  background: #ddd;
+}
+
+.divider::before {
+  left: 0;
+}
+
+.divider::after {
+  right: 0;
+}
+
+.password-section {
+  margin-top: 20px;
+}
+
+.password-input {
+  width: 100%;
+  padding: 15px;
+  font-size: 1em;
+  border: 2px solid #ddd;
+  border-radius: 12px;
+  margin-bottom: 15px;
+  transition: border-color 0.3s ease;
+}
+
+.password-input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.password-input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.footer-links {
+  margin-top: 30px;
+  text-align: center;
+}
+
+.footer-links a {
+  color: #667eea;
+  text-decoration: none;
+  font-size: 0.9em;
+}
+
+.footer-links a:hover {
+  text-decoration: underline;
+}

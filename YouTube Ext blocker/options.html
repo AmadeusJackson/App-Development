@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Display Blocker - Settings</title>
+  <link rel="stylesheet" href="styles/options.css">
+</head>
+<body>
+  <div class="options-container">
+    <header>
+      <h1>🚫 YouTube Display Blocker</h1>
+      <p class="subtitle">Settings & Configuration</p>
+    </header>
+    
+    <main>
+      <!-- Extension Status -->
+      <section class="settings-section">
+        <h2>Extension Status</h2>
+        <div class="status-card">
+          <div class="status-item">
+            <span class="status-label">Extension:</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="extension-enabled" checked>
+              <span class="slider"></span>
+            </label>
+            <span id="extension-status" class="status-text">Enabled</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Current Status:</span>
+            <span id="blocking-status" class="status-badge">Checking...</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">External Display:</span>
+            <span id="display-status" class="status-badge">Checking...</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Focus Mode:</span>
+            <span id="focus-mode-status" class="status-badge">Checking...</span>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Focus Mode -->
+      <section class="settings-section">
+        <h2>Focus Mode</h2>
+        <div class="status-card">
+          <div class="status-item">
+            <span class="status-label">Enable Focus Mode:</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="focus-mode-enabled">
+              <span class="slider"></span>
+            </label>
+            <span id="focus-mode-status-text" class="status-text">Disabled</span>
+          </div>
+          <p class="info-text">When Focus Mode is enabled, YouTube will be blocked regardless of display connection. Perfect for staying focused during work or study sessions.</p>
+        </div>
+      </section>
+      
+      <!-- Manual Controls -->
+      <section class="settings-section">
+        <h2>Manual Controls</h2>
+        <div class="button-group">
+          <button id="lock-btn" class="action-button lock-button">🔒 Lock YouTube Now</button>
+          <button id="unlock-btn" class="action-button unlock-button">🔓 Unlock YouTube</button>
+        </div>
+      </section>
+      
+      <!-- Password Settings -->
+      <section class="settings-section">
+        <h2>Password Authentication</h2>
+        <div class="form-group">
+          <label for="new-password">Set New Password:</label>
+          <input type="password" id="new-password" class="form-input" placeholder="Enter new password">
+          <input type="password" id="confirm-password" class="form-input" placeholder="Confirm password">
+          <button id="save-password-btn" class="form-button">Save Password</button>
+          <div id="password-message" class="message"></div>
+        </div>
+      </section>
+      
+      <!-- WebAuthn Settings -->
+      <section class="settings-section">
+        <h2>Biometric Authentication</h2>
+        <div class="form-group">
+          <p class="info-text">Use Touch ID, Face ID, or Windows Hello for quick unlocking.</p>
+          <div id="webauthn-status" class="status-info"></div>
+          <button id="setup-webauthn-btn" class="form-button">Setup Biometric Auth</button>
+          <button id="remove-webauthn-btn" class="form-button secondary" style="display: none;">Remove Biometric Auth</button>
+        </div>
+      </section>
+      
+      <!-- Unlock Duration -->
+      <section class="settings-section">
+        <h2>Unlock Duration</h2>
+        <div class="form-group">
+          <label for="unlock-duration">Stay unlocked for:</label>
+          <select id="unlock-duration" class="form-select">
+            <option value="1800000">30 minutes</option>
+            <option value="3600000" selected>1 hour</option>
+            <option value="7200000">2 hours</option>
+            <option value="14400000">4 hours</option>
+            <option value="0">Until display disconnected</option>
+          </select>
+        </div>
+      </section>
+    </main>
+    
+    <footer>
+      <p class="footer-text">YouTube will be automatically blocked when an external display is connected or when Focus Mode is enabled.</p>
+    </footer>
+  </div>
+  
+  <script src="options.js"></script>
+</body>
+</html>

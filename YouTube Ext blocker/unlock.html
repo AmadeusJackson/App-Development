@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unlock YouTube - Display Blocker</title>
+  <link rel="stylesheet" href="styles/unlock.css">
+</head>
+<body>
+  <div class="unlock-container">
+    <div class="unlock-card">
+      <h1>🔓 Unlock YouTube</h1>
+      <p class="subtitle">Authenticate to access YouTube</p>
+      
+      <div id="error-message" class="error-message" style="display: none;"></div>
+      <div id="success-message" class="success-message" style="display: none;"></div>
+      
+      <div class="auth-options">
+        <button id="webauthn-btn" class="auth-button webauthn-button">
+          <span class="button-icon">👆</span>
+          <span>Use Touch ID / Face ID</span>
+        </button>
+        
+        <div class="divider">
+          <span>or</span>
+        </div>
+        
+        <div class="password-section">
+          <input 
+            type="password" 
+            id="password-input" 
+            class="password-input" 
+            placeholder="Enter password"
+            autocomplete="current-password"
+          >
+          <button id="password-btn" class="auth-button password-button">
+            Unlock with Password
+          </button>
+        </div>
+      </div>
+      
+      <div class="footer-links">
+        <a href="options.html" target="_blank">Settings</a>
+      </div>
+    </div>
+  </div>
+  
+  <script src="unlock.js"></script>
+</body>
+</html>
