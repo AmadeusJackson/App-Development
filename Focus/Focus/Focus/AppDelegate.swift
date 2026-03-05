@@ -185,6 +185,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let candidates: [UTType?] = [
             UTType(filenameExtension: "ics"),
             .commaSeparatedText,
+            UTType(filenameExtension: "cvs"),
             .pdf,
             .html,
             .markdown,
@@ -197,7 +198,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Could not import tasks"
-        alert.informativeText = "No task blocks were found in \(url.lastPathComponent). Supported formats: .ics, .csv, .pdf, .html, .md"
+        alert.informativeText = "No task blocks were found in \(url.lastPathComponent). Supported formats: .ics, .csv/.cvs, .pdf, .html, .md"
         alert.runModal()
     }
 
@@ -286,7 +287,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         case "ics":
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
             return parseICS(raw)
-        case "csv":
+        case "csv", "cvs":
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
             return parseCSV(raw)
         case "md", "markdown":
