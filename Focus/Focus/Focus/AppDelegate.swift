@@ -123,6 +123,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         menu.addItem(NSMenuItem(title: "Clear Completed Tasks", action: #selector(clearCompletedTasks), keyEquivalent: "c"))
         menu.addItem(NSMenuItem.separator())
 
+
+    private func rebuildMenu() {
+        let menu = NSMenu()
+
+        menu.addItem(NSMenuItem(title: "Import Notion Calendar (.ics)…", action: #selector(importCalendar), keyEquivalent: "i"))
+        menu.addItem(NSMenuItem(title: "Add Locked Block…", action: #selector(addLockedBlock), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "Clear Completed Tasks", action: #selector(clearCompletedTasks), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem.separator())
+
         if tasks.isEmpty {
             let item = NSMenuItem(title: "No tasks imported", action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -402,6 +411,113 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         let iso = ISO8601DateFormatter()
         return iso.date(from: trimmed)
+
+        let attrs: [NSAttributedString.Key: Any]
+        if task.isCompleted {
+            attrs = [
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        } else {
+            attrs = [.foregroundColor: NSColor.labelColor]
+        }
+
+        return NSAttributedString(string: text, attributes: attrs)
+    }
+
+    @objc private func importCalendar() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "ics")!]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
+
+        let importedTasks = parseICS(raw)
+        tasks.removeAll(where: { !$0.isLockedBlock })
+        tasks.append(contentsOf: importedTasks)
+        rebuildMenu()
+    }
+
+    @objc private func addLockedBlock() {
+        let alert = NSAlert()
+        alert.messageText = "Add Locked Block"
+        alert.informativeText = "Title,start hour,end hour (24h). Example: Sleep,23,7"
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "Sleep,23,7"
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let parts = input.stringValue.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 3,
+              let startHour = Int(parts[1]),
+              let endHour = Int(parts[2]),
+              (0...23).contains(startHour),
+              (0...23).contains(endHour) else { return }
+
+        let now = Date()
+        let calendar = Calendar.current
+
+        guard var start = calendar.date(bySettingHour: startHour, minute: 0, second: 0, of: now) else { return }
+        guard var end = calendar.date(bySettingHour: endHour, minute: 0, second: 0, of: now) else { return }
+
+        if end <= start {
+            end = calendar.date(byAdding: .day, value: 1, to: end) ?? end
+        }
+        if start < now {
+            start = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+            end = calendar.date(byAdding: .day, value: 1, to: end) ?? end
+        }
+
+        tasks.append(FocusTask(title: parts[0], startDate: start, endDate: end, isLockedBlock: true))
+        rebuildMenu()
+    }
+
+    @objc private func clearCompletedTasks() {
+        tasks.removeAll(where: { $0.isCompleted && !$0.isLockedBlock })
+        rebuildMenu()
+    }
+
+    private func parseICS(_ rawICS: String) -> [FocusTask] {
+        let unfolded = rawICS
+            .replacingOccurrences(of: "\r\n ", with: "")
+            .replacingOccurrences(of: "\n ", with: "")
+
+        let blocks = unfolded.components(separatedBy: "BEGIN:VEVENT")
+        var imported: [FocusTask] = []
+
+        for block in blocks where block.contains("END:VEVENT") {
+            let lines = block.components(separatedBy: .newlines)
+            var summary = "Task"
+            var uid = UUID().uuidString
+            var start: Date?
+            var end: Date?
+
+            for line in lines {
+                if line.hasPrefix("SUMMARY:") {
+                    summary = String(line.dropFirst("SUMMARY:".count))
+                } else if line.hasPrefix("UID:") {
+                    uid = String(line.dropFirst("UID:".count))
+                } else if line.hasPrefix("DTSTART") {
+                    start = parseICSDate(line)
+                } else if line.hasPrefix("DTEND") {
+                    end = parseICSDate(line)
+                }
+            }
+
+            if let start, let end, end > start {
+                let notionPageID = uid.replacingOccurrences(of: "-", with: "")
+                imported.append(FocusTask(title: summary, startDate: start, endDate: end, notionPageID: notionPageID))
+            }
+        }
+
+        return imported
     }
 
     private func parseICSDate(_ line: String) -> Date? {
