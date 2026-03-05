@@ -1,170 +1,508 @@
-//
-//  AppDelegate.swift
-//  Focus
-//
-//  Created by Amadeus Jackson on 1/26/26.
-//
-
 import Cocoa
+import PDFKit
+import UniformTypeIdentifiers
 import UserNotifications
 
-@main
-class AppDelegate: NSObject, NSApplicationDelegate {
+final class FocusTask {
+    let id: String
+    var title: String
+    var startDate: Date
+    var endDate: Date
+    var isCompleted: Bool
+    var isLockedBlock: Bool
+    var notificationSent: Bool
+    var notionPageID: String?
 
-    // MARK: - Menu Bar & State
-    var statusItem: NSStatusItem!
-    var focusTimer: Timer?
-
-    var breakEndDate: Date?
-    var focusActive: Bool = true // Focus ON by default
-    let breakDuration: TimeInterval = 10 * 60 // 10 minutes
-    let dayStartHour = 7
-    let dayEndHour = 20
-    let nightStartHour = 20
-    let nightEndHour = 22
-
-    // MARK: - App Lifecycle
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        requestNotificationPermission()
-        setupMenuBar()
-        startFocusLoop()
+    init(
+        id: String = UUID().uuidString,
+        title: String,
+        startDate: Date,
+        endDate: Date,
+        isCompleted: Bool = false,
+        isLockedBlock: Bool = false,
+        notificationSent: Bool = false,
+        notionPageID: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.isCompleted = isCompleted
+        self.isLockedBlock = isLockedBlock
+        self.notificationSent = notificationSent
+        self.notionPageID = notionPageID
     }
 
-    // MARK: - Menu Bar Setup
-    func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    var duration: TimeInterval {
+        max(15 * 60, endDate.timeIntervalSince(startDate))
+    }
+}
 
-        if let button = statusItem.button {
-            button.title = "🧠"
+final class NotionClient {
+    private let token = ProcessInfo.processInfo.environment["NOTION_TOKEN"]
+
+    func markTaskDone(_ task: FocusTask) async {
+        guard let token, let notionPageID = task.notionPageID else { return }
+        guard let url = URL(string: "https://api.notion.com/v1/pages/\(notionPageID)") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("2022-06-28", forHTTPHeaderField: "Notion-Version")
+
+        let payload: [String: Any] = [
+            "properties": [
+                "Status": [
+                    "status": ["name": "Done"]
+                ]
+            ]
+        ]
+
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        _ = try? await URLSession.shared.data(for: request)
+    }
+}
+
+@main
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    private enum NotificationAction {
+        static let categoryID = "TASK_FINISHED"
+        static let done = "DONE_ACTION"
+        static let doTonight = "DO_TONIGHT_ACTION"
+    }
+
+    private var statusItem: NSStatusItem!
+    private var tasks: [FocusTask] = []
+    private var pollTimer: Timer?
+    private let notionClient = NotionClient()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        configureNotifications()
+        setupMenuBar()
+        startTaskPolling()
+    }
+
+    private func configureNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+
+        let doneAction = UNNotificationAction(
+            identifier: NotificationAction.done,
+            title: "Done",
+            options: [.authenticationRequired]
+        )
+        let tonightAction = UNNotificationAction(
+            identifier: NotificationAction.doTonight,
+            title: "Do tonight",
+            options: [.authenticationRequired]
+        )
+
+        let category = UNNotificationCategory(
+            identifier: NotificationAction.categoryID,
+            actions: [doneAction, tonightAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        center.setNotificationCategories([category])
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "📅"
+        rebuildMenu()
+    }
+
+    private func rebuildMenu() {
+        let menu = NSMenu()
+
+        menu.addItem(NSMenuItem(title: "Import Notion Calendar PDF…", action: #selector(importCalendar), keyEquivalent: "i"))
+        menu.addItem(NSMenuItem(title: "Add Locked Block…", action: #selector(addLockedBlock), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "Clear Completed Tasks", action: #selector(clearCompletedTasks), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem.separator())
+
+        if tasks.isEmpty {
+            let item = NSMenuItem(title: "No tasks imported", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else {
+            for task in tasks.sorted(by: { $0.startDate < $1.startDate }) {
+                let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                item.attributedTitle = attributedTitle(for: task)
+                item.isEnabled = false
+                menu.addItem(item)
+            }
         }
 
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Start 10-Minute Break", action: #selector(startBreak), keyEquivalent: "b"))
-        menu.addItem(NSMenuItem(title: "Toggle Focus ON/OFF", action: #selector(toggleFocus), keyEquivalent: "f"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Balanced Focus", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
-    // MARK: - Focus Loop
-    func startFocusLoop() {
-        focusTimer = Timer.scheduledTimer(timeInterval: 3, target: self, selector: #selector(checkFocusRules), userInfo: nil, repeats: true)
+    private func attributedTitle(for task: FocusTask) -> NSAttributedString {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        let timeLabel = "\(formatter.string(from: task.startDate)) - \(formatter.string(from: task.endDate))"
+        let prefix = task.isLockedBlock ? "🔒 " : ""
+        let text = "\(prefix)\(timeLabel)  \(task.title)"
+
+        let attrs: [NSAttributedString.Key: Any]
+        if task.isCompleted {
+            attrs = [
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        } else {
+            attrs = [.foregroundColor: NSColor.labelColor]
+        }
+
+        return NSAttributedString(string: text, attributes: attrs)
     }
 
-    @objc func checkFocusRules() {
-        if isWeekend() {
-            // Weekends: skip enforcement
-            updateStatusIcon(mode: "weekend")
+    @objc private func importCalendar() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = supportedImportTypes()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let importedTasks = parseTasks(from: url)
+        guard !importedTasks.isEmpty else {
+            showImportFailedAlert(for: url)
             return
         }
 
-        if isBreakActive() {
-            updateStatusIcon(mode: "break")
-            return
+        tasks.removeAll(where: { !$0.isLockedBlock })
+        tasks.append(contentsOf: importedTasks)
+        rebuildMenu()
+    }
+
+    private func supportedImportTypes() -> [UTType] {
+        [.pdf]
+    }
+
+    private func showImportFailedAlert(for url: URL) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Could not import tasks"
+        alert.informativeText = "No tasks were found in \(url.lastPathComponent). Please import a PDF file containing your schedule lines."
+        alert.runModal()
+    }
+
+    @objc private func addLockedBlock() {
+        let alert = NSAlert()
+        alert.messageText = "Add Locked Block"
+        alert.informativeText = "Title,start hour,end hour (24h). Example: Sleep,23,7"
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "Sleep,23,7"
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let parts = input.stringValue.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 3,
+              let startHour = Int(parts[1]),
+              let endHour = Int(parts[2]),
+              (0...23).contains(startHour),
+              (0...23).contains(endHour) else { return }
+
+        let now = Date()
+        let calendar = Calendar.current
+
+        guard var start = calendar.date(bySettingHour: startHour, minute: 0, second: 0, of: now) else { return }
+        guard var end = calendar.date(bySettingHour: endHour, minute: 0, second: 0, of: now) else { return }
+
+        if end <= start {
+            end = calendar.date(byAdding: .day, value: 1, to: end) ?? end
+        }
+        if start < now {
+            start = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+            end = calendar.date(byAdding: .day, value: 1, to: end) ?? end
         }
 
-        if isNight() {
-            updateStatusIcon(mode: "night")
-            closeYouTubeTabs()
-            return
+        tasks.append(FocusTask(title: parts[0], startDate: start, endDate: end, isLockedBlock: true))
+        rebuildMenu()
+    }
+
+    @objc private func clearCompletedTasks() {
+        tasks.removeAll(where: { $0.isCompleted && !$0.isLockedBlock })
+        rebuildMenu()
+    }
+
+    private func parseICS(_ rawICS: String) -> [FocusTask] {
+        let unfolded = rawICS
+            .replacingOccurrences(of: "\r\n ", with: "")
+            .replacingOccurrences(of: "\n ", with: "")
+
+        let blocks = unfolded.components(separatedBy: "BEGIN:VEVENT")
+        var imported: [FocusTask] = []
+
+        for block in blocks where block.contains("END:VEVENT") {
+            let lines = block.components(separatedBy: .newlines)
+            var summary = "Task"
+            var uid = UUID().uuidString
+            var start: Date?
+            var end: Date?
+
+            for line in lines {
+                if line.hasPrefix("SUMMARY:") {
+                    summary = String(line.dropFirst("SUMMARY:".count))
+                } else if line.hasPrefix("UID:") {
+                    uid = String(line.dropFirst("UID:".count))
+                } else if line.hasPrefix("DTSTART") {
+                    start = parseICSDate(line)
+                } else if line.hasPrefix("DTEND") {
+                    end = parseICSDate(line)
+                }
+            }
+
+            if let start, let end, end > start {
+                let notionPageID = uid.replacingOccurrences(of: "-", with: "")
+                imported.append(FocusTask(title: summary, startDate: start, endDate: end, notionPageID: notionPageID))
+            }
         }
 
-        // Weekday focus enforcement
-        if focusActive {
-            updateStatusIcon(mode: "focus")
-            closeYouTubeTabs()
+        return imported
+    }
+
+    private func parseTasks(from fileURL: URL) -> [FocusTask] {
+        let ext = fileURL.pathExtension.lowercased()
+        guard ext == "pdf" else { return [] }
+
+        guard let document = PDFDocument(url: fileURL) else { return [] }
+        var fullText = ""
+        for index in 0..<document.pageCount {
+            fullText += document.page(at: index)?.string ?? ""
+            fullText += "\n"
+        }
+        return parseScheduleText(fullText)
+    }
+
+    private func parseCSV(_ rawCSV: String) -> [FocusTask] {
+        let lines = rawCSV
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else { return [] }
+
+        let header = splitCSVLine(lines[0]).map { $0.lowercased() }
+        let titleIndex = header.firstIndex(where: { ["title", "task", "summary", "name"].contains($0) }) ?? 0
+        let startIndex = header.firstIndex(where: { ["start", "startdate", "start time"].contains($0) }) ?? 1
+        let endIndex = header.firstIndex(where: { ["end", "enddate", "end time"].contains($0) }) ?? 2
+        let uidIndex = header.firstIndex(where: { ["uid", "id", "pageid", "notionid"].contains($0) })
+
+        return lines.dropFirst().compactMap { line in
+            let columns = splitCSVLine(line)
+            guard columns.indices.contains(titleIndex),
+                  columns.indices.contains(startIndex),
+                  columns.indices.contains(endIndex),
+                  let start = parseFlexibleDate(columns[startIndex]),
+                  let end = parseFlexibleDate(columns[endIndex]),
+                  end > start else { return nil }
+
+            let uid = uidIndex.flatMap { columns.indices.contains($0) ? columns[$0] : nil }
+            return FocusTask(
+                title: columns[titleIndex].isEmpty ? "Task" : columns[titleIndex],
+                startDate: start,
+                endDate: end,
+                notionPageID: uid?.replacingOccurrences(of: "-", with: "")
+            )
         }
     }
 
-    // MARK: - Break Handling
-    @objc func startBreak() {
-        breakEndDate = Date().addingTimeInterval(breakDuration)
-        sendNotification(title: "YouTube Break Started", body: "You have 10 minutes. Enjoy it!")
-    }
+    private func splitCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
 
-    func isBreakActive() -> Bool {
-        guard let end = breakEndDate else { return false }
-        if Date() >= end {
-            breakEndDate = nil
-            sendNotification(title: "Break Over", body: "Back to focus mode.")
-            return false
+        for char in line {
+            if char == "\"" {
+                inQuotes.toggle()
+                continue
+            }
+            if char == "," && !inQuotes {
+                fields.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                current = ""
+            } else {
+                current.append(char)
+            }
         }
-        return true
+
+        fields.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+        return fields
     }
 
-    // MARK: - Focus Toggle
-    @objc func toggleFocus() {
-        focusActive.toggle()
-        let status = focusActive ? "ON" : "OFF"
-        sendNotification(title: "Focus Mode \(status)", body: "You have manually toggled focus mode.")
+    private func stripHTML(_ html: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "<[^>]+>", options: []) else { return html }
+        let fullRange = NSRange(location: 0, length: (html as NSString).length)
+        let withoutTags = regex.stringByReplacingMatches(in: html, options: [], range: fullRange, withTemplate: " ")
+        return withoutTags
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
     }
 
-    // MARK: - Day/Night/Weekend Checks
-    func isNight() -> Bool {
-        let hour = Calendar.current.component(.hour, from: Date())
-        return hour >= nightStartHour && hour < nightEndHour
-    }
+    private func parseScheduleText(_ raw: String) -> [FocusTask] {
+        // Expected line examples (markdown/html/pdf text):
+        // Task title | 2026-02-01 09:00 | 2026-02-01 10:00 | optionalUID
+        // - [ ] Task title | 2026-02-01T09:00 | 2026-02-01T10:00
+        let lines = raw
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
-    func isWeekend() -> Bool {
-        let weekday = Calendar.current.component(.weekday, from: Date())
-        // Sunday = 1, Saturday = 7
-        return weekday == 1 || weekday == 7
-    }
+        return lines.compactMap { line in
+            let normalized = line
+                .replacingOccurrences(of: "- [ ]", with: "")
+                .replacingOccurrences(of: "* [ ]", with: "")
+                .trimmingCharacters(in: .whitespaces)
 
-    // MARK: - Chrome YouTube Detection
-    func closeYouTubeTabs() {
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                set tabCount to count of tabs of w
-                repeat with i from tabCount to 1 by -1
-                    set t to tab i of w
-                    set tabURL to URL of t
-                    if tabURL contains "youtube.com" or tabURL contains "youtu.be" or tabURL contains "m.youtube.com" then
-                        close t
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            appleScript.executeAndReturnError(nil)
+            let parts = normalized.split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }
+            guard parts.count >= 3,
+                  let start = parseFlexibleDate(parts[1]),
+                  let end = parseFlexibleDate(parts[2]),
+                  end > start else { return nil }
+
+            let uid = parts.count >= 4 ? parts[3] : nil
+            return FocusTask(
+                title: parts[0].isEmpty ? "Task" : parts[0],
+                startDate: start,
+                endDate: end,
+                notionPageID: uid?.replacingOccurrences(of: "-", with: "")
+            )
         }
     }
 
-    // MARK: - Notifications
-    func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
+    private func parseFlexibleDate(_ value: String) -> Date? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formats = [
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "MM/dd/yyyy HH:mm",
+            "MM/dd/yyyy h:mm a"
+        ]
+
+        for format in formats {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmed) {
+                return date
+            }
+        }
+
+        let iso = ISO8601DateFormatter()
+        return iso.date(from: trimmed)
     }
 
-    func sendNotification(title: String, body: String) {
+    private func parseICSDate(_ line: String) -> Date? {
+        guard let value = line.split(separator: ":", maxSplits: 1).last else { return nil }
+        let stringValue = String(value)
+
+        let utc = DateFormatter()
+        utc.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        utc.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let local = DateFormatter()
+        local.dateFormat = "yyyyMMdd'T'HHmmss"
+
+        let day = DateFormatter()
+        day.dateFormat = "yyyyMMdd"
+
+        return utc.date(from: stringValue) ?? local.date(from: stringValue) ?? day.date(from: stringValue)
+    }
+
+    private func startTaskPolling() {
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.evaluateTaskState()
+        }
+        evaluateTaskState()
+    }
+
+    private func evaluateTaskState() {
+        let now = Date()
+        for task in tasks where !task.isCompleted && !task.isLockedBlock {
+            if now >= task.endDate && !task.notificationSent {
+                task.notificationSent = true
+                sendTaskFinishedNotification(for: task)
+            }
+        }
+        rebuildMenu()
+    }
+
+    private func sendTaskFinishedNotification(for task: FocusTask) {
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
+        content.title = "Task time finished"
+        content.body = task.title
+        content.categoryIdentifier = NotificationAction.categoryID
+        content.userInfo = ["taskID": task.id]
 
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        let request = UNNotificationRequest(identifier: task.id, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 
-    // MARK: - Status Icon Updates
-    func updateStatusIcon(mode: String) {
-        guard let button = statusItem.button else { return }
-        switch mode {
-        case "focus":
-            button.title = "🧠"
-        case "break":
-            button.title = "🔵"
-        case "night":
-            button.title = "🌙"
-        case "weekend":
-            button.title = "⚪"
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        defer {
+            rebuildMenu()
+            completionHandler()
+        }
+
+        guard let taskID = response.notification.request.content.userInfo["taskID"] as? String,
+              let task = tasks.first(where: { $0.id == taskID }) else { return }
+
+        switch response.actionIdentifier {
+        case NotificationAction.done:
+            task.isCompleted = true
+            Task {
+                await notionClient.markTaskDone(task)
+            }
+        case NotificationAction.doTonight:
+            moveTaskToNextFreeTonightSlot(task)
+            task.notificationSent = false
         default:
-            button.title = "🧠"
+            break
         }
     }
 
-    // MARK: - Quit
-    @objc func quitApp() {
+    private func moveTaskToNextFreeTonightSlot(_ task: FocusTask) {
+        let calendar = Calendar.current
+        let now = Date()
+        let tonightStart = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: now) ?? now
+        let tonightEnd = calendar.date(bySettingHour: 23, minute: 59, second: 0, of: now) ?? now
+
+        var candidateStart = max(now, tonightStart)
+        let duration = task.duration
+
+        while candidateStart.addingTimeInterval(duration) <= tonightEnd {
+            let candidateEnd = candidateStart.addingTimeInterval(duration)
+            let overlaps = tasks
+                .filter { $0.id != task.id && !$0.isCompleted }
+                .contains { existing in
+                    candidateStart < existing.endDate && candidateEnd > existing.startDate
+                }
+
+            if !overlaps {
+                task.startDate = candidateStart
+                task.endDate = candidateEnd
+                return
+            }
+
+            candidateStart = calendar.date(byAdding: .minute, value: 15, to: candidateStart) ?? candidateStart.addingTimeInterval(15 * 60)
+        }
+    }
+
+    @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
     }
 }
