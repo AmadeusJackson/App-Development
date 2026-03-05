@@ -308,6 +308,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             guard let raw = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
             return parseScheduleText(raw)
         }
+        if start < now {
+            start = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+            end = calendar.date(byAdding: .day, value: 1, to: end) ?? end
+        }
+
+        tasks.append(FocusTask(title: parts[0], startDate: start, endDate: end, isLockedBlock: true))
+        rebuildMenu()
     }
 
     private func parseCSV(_ rawCSV: String) -> [FocusTask] {
@@ -427,6 +434,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         let iso = ISO8601DateFormatter()
         return iso.date(from: trimmed)
+    @objc private func clearCompletedTasks() {
+        tasks.removeAll(where: { $0.isCompleted && !$0.isLockedBlock })
+        rebuildMenu()
+    }
+
+    private func parseICS(_ rawICS: String) -> [FocusTask] {
+        let unfolded = rawICS
+            .replacingOccurrences(of: "\r\n ", with: "")
+            .replacingOccurrences(of: "\n ", with: "")
+
+        let blocks = unfolded.components(separatedBy: "BEGIN:VEVENT")
+        var imported: [FocusTask] = []
+
+        for block in blocks where block.contains("END:VEVENT") {
+            let lines = block.components(separatedBy: .newlines)
+            var summary = "Task"
+            var uid = UUID().uuidString
+            var start: Date?
+            var end: Date?
+
+            for line in lines {
+                if line.hasPrefix("SUMMARY:") {
+                    summary = String(line.dropFirst("SUMMARY:".count))
+                } else if line.hasPrefix("UID:") {
+                    uid = String(line.dropFirst("UID:".count))
+                } else if line.hasPrefix("DTSTART") {
+                    start = parseICSDate(line)
+                } else if line.hasPrefix("DTEND") {
+                    end = parseICSDate(line)
+                }
+            }
+
+            if let start, let end, end > start {
+                let notionPageID = uid.replacingOccurrences(of: "-", with: "")
+                imported.append(FocusTask(title: summary, startDate: start, endDate: end, notionPageID: notionPageID))
+            }
+        }
+
+        return imported
     }
 
     private func parseICSDate(_ line: String) -> Date? {
